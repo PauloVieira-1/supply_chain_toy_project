@@ -124,6 +124,7 @@ def main() -> None:
     connections = [
         (nodes[0], nodes[1]),
         (nodes[1], nodes[2]),
+        (nodes[2], nodes[0]),
     ]
     create_graph_window(nodes, connections, title="Supply Chain Network")
 
