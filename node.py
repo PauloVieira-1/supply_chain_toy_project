@@ -18,6 +18,7 @@ class Node:
     name: str = field(init=True, repr=True)
     capacity: int = field(init=True, repr=True)
     policy: str = field(init=True, repr=True)
+    holding_cost: float = field(init=True, repr=True)
     # ------------
 
     # Dynamic state 
