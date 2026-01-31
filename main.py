@@ -46,8 +46,13 @@ def simulate_episode(
 
     node_orders = {node.id: [] for node in nodes}  
 
+    print("\n=====================================")
+    print("Starting Episode Simulation")
+    print("=====================================\n")
+
     for t in range(horizon):
         print(f"\n--- Time Step {t} ---")
+        print("----------------------\n")
 
         # Process subassembly demand first
         if sub_node:
@@ -73,14 +78,18 @@ def simulate_episode(
             sub_node.backorders += max(0, final_demand - assemblies_possible)
 
             print(f"\nNode {sub_node.name} at Time {t} (SubAssembly)")
+            print("----------------------\n")
+
             print(f"Final Demand: {final_demand}")
             print(f"Assemblies Possible: {assemblies_possible}")
-            print(f"Inventory: {sub_node.inventory}, Backorders: {sub_node.backorders}")
+            print(f"Inventory: {sub_node.inventory}, Backorders: {sub_node.backorders}\n")
 
         # Process raw material nodes 
         for node in raw_nodes:
-            print(f"\nNode {node.name} at Time {t} (Raw Material)")
-            print(f"Time {t} | Current State: {node}")
+            print(f"\n\nNode {node.name} at Time {t} (Raw Material)")
+            print("----------------------\n")
+
+            print(f"Time {t} | Current State: {node}\n")
 
             # Decide order quantity using base-stock policy
             policy = Policy(
@@ -93,6 +102,7 @@ def simulate_episode(
             pending_orders = node_orders[node.id]
             order_quantity = policy.decide_order_quantity(pending_orders)
             print(f"Decided Order Quantity: {order_quantity}")
+
 
             # Place order with random lead time (1-3)
             if order_quantity > 0:
@@ -134,8 +144,10 @@ def simulate_episode(
             )
 
             print(f"After Demand {demand} | Updated State: {node}")
-
+    
+    print("=====================================\n")
     print("Episode simulation completed.")
+    print("=====================================\n")
 
 
 
