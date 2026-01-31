@@ -17,8 +17,10 @@ class Node:
     id: int = field(init=True, repr=True)
     name: str = field(init=True, repr=True)
     capacity: int = field(init=True, repr=True)
-    policy: str = field(init=True, repr=True)
+    type: str = field(init=True, repr=True)
     holding_cost: float = field(init=True, repr=True)
+    upstream_ids: list[int] = field(init=True, repr=False)
+    downstream_ids: list[int] = field(init=True, repr=False)
     # ------------
 
     # Dynamic state 
