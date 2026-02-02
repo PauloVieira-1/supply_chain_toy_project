@@ -121,9 +121,9 @@ def create_graph_window(
         ),
     )
 
-    # -----------------------
+    # -------------------------
     # Arrow heads (annotations)
-    # -----------------------
+    # -------------------------
     annotations = []
     for u, v in G.edges():
         x0, y0 = pos[u]

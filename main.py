@@ -4,39 +4,31 @@ from numpy.random import Generator
 from numpy import random as rnd
 from node import Node, StateCategory
 from graph import create_graph_window
-from policy import Policy
+from policy import BaseStockPolicy
 from typing import List
 import numpy as np
 
 
-class StateCategory(Enum):
-    AWAIT_EVENT = auto()
-    AWAIT_ACTION = auto()
-    FINAL = auto()
+# Helper function to simulate an episode
 
-class State:
-    """
-    Represents the MDP state of a node in a supply chain simulation.
-    """ 
-    capacity: int
-    inventory: int
-    backorders: int
-    remaining_time: int
-    category: StateCategory
+def advance_time(pending_orders):
+    arrived = 0
+    new_pending = []
 
+    for qty, lt in pending_orders:
+        if lt <= 1:
+            arrived += qty
+        else:
+            new_pending.append((qty, lt - 1))
+
+    return arrived, new_pending
 
 
 def simulate_episode(
     nodes: list,
     horizon: int = 5,
-    assembly_requirement: list[int] = None  # e.g., [1,2,3] for Node 4
+    assembly_requirement: list[int] = None
 ) -> None:
-    """
-    Simulate a single episode with subassembly support.
-
-    - Raw Material nodes have their own stochastic demand and base-stock replenishment.
-    - SubAssembly node consumes parts from raw material nodes according to assembly_requirement.
-    """
 
     if assembly_requirement is None:
         assembly_requirement = [1, 1, 1]
@@ -44,7 +36,8 @@ def simulate_episode(
     sub_node = next((n for n in nodes if n.type == "SubAssembly"), None)
     raw_nodes = [n for n in nodes if n.type == "Raw Material"]
 
-    node_orders = {node.id: [] for node in nodes}  
+    # Pending orders per node: (quantity, remaining_lead_time)
+    node_orders = {node.id: [] for node in nodes}
 
     print("\n=====================================")
     print("Starting Episode Simulation")
@@ -52,79 +45,62 @@ def simulate_episode(
 
     for t in range(horizon):
         print(f"\n--- Time Step {t} ---")
-        print("----------------------\n")
+        print("----------------------")
 
-        # Process subassembly demand first
+        # =========================================================
+        # 1. Orders arrive (lead time advances ONCE per period)
+        # =========================================================
+        for node in nodes:
+            arrived, updated_orders = advance_time(node_orders[node.id])
+            node.inventory += arrived
+            node_orders[node.id] = updated_orders
+
+        # =========================================================
+        # 2. Subassembly demand and production
+        # =========================================================
         if sub_node:
-            # Generate stochastic demand for final product
             final_demand = np.random.poisson(lam=5)
 
-            part_demand = [final_demand * qty for qty in assembly_requirement]
+            part_demand = [
+                final_demand * qty for qty in assembly_requirement
+            ]
+
             received_parts = []
 
-            for i, node in enumerate(raw_nodes):
+            for i, raw_node in enumerate(raw_nodes): # assumes backordering is allowed, no partial fulfillment or allocation
                 requested = part_demand[i]
-                actual_supplied = min(requested, node.inventory)
-                node.inventory -= actual_supplied
-                node.backorders += requested - actual_supplied
-                received_parts.append(actual_supplied)
+                supplied = min(requested, raw_node.inventory)
+                raw_node.inventory -= supplied
+                raw_node.backorders += requested - supplied
+                received_parts.append(supplied)
 
-            # Determine how many full assemblies can be made
             assemblies_possible = min(
-                received_parts[i] // assembly_requirement[i] for i in range(len(raw_nodes))
-            )
+                received_parts[i] // assembly_requirement[i]
+                for i in range(len(raw_nodes))
+            ) # No lead time because this is not too relevant for this example. Assumes immediate assembly.
 
             sub_node.inventory += assemblies_possible
             sub_node.backorders += max(0, final_demand - assemblies_possible)
 
-            print(f"\nNode {sub_node.name} at Time {t} (SubAssembly)")
-            print("----------------------\n")
+            print(f"\nSubAssembly {sub_node.name}")
+            print(f"Final demand: {final_demand}")
+            print(f"Assemblies produced: {assemblies_possible}")
+            print(f"Inventory: {sub_node.inventory}, Backorders: {sub_node.backorders}")
 
-            print(f"Final Demand: {final_demand}")
-            print(f"Assemblies Possible: {assemblies_possible}")
-            print(f"Inventory: {sub_node.inventory}, Backorders: {sub_node.backorders}\n")
-
-        # Process raw material nodes 
+        # =========================================================
+        # 3. Raw material demand, ordering, and state update
+        # =========================================================
         for node in raw_nodes:
-            print(f"\n\nNode {node.name} at Time {t} (Raw Material)")
-            print("----------------------\n")
-
-            print(f"Time {t} | Current State: {node}\n")
-
-            # Decide order quantity using base-stock policy
-            policy = Policy(
-                node=node,
-                target_inventory=50,
-                safety_stock=10,
-                price_per_unit=20.0
-            )
-
-            pending_orders = node_orders[node.id]
-            order_quantity = policy.decide_order_quantity(pending_orders)
-            print(f"Decided Order Quantity: {order_quantity}")
-
-
-            # Place order with random lead time (1-3)
-            if order_quantity > 0:
-                lead_time = np.random.randint(1, 4)
-                pending_orders.append((order_quantity, lead_time))
-
-            # Process incoming orders
-            updated_orders = []
-            for qty, time_left in pending_orders:
-                if time_left <= 0:
-                    node.inventory += qty
-                else:
-                    updated_orders.append((qty, time_left - 1))
-            node_orders[node.id] = updated_orders
+            print(f"\nNode {node.name} (Raw Material)")
+            print(f"Before demand | Inventory: {node.inventory}, Backorders: {node.backorders}")
 
             # External stochastic demand
             demand = np.random.poisson(lam=5)
 
-            # Fulfill existing backorders first
-            fulfill_from_inventory = min(node.inventory, node.backorders)
-            node.inventory -= fulfill_from_inventory
-            node.backorders -= fulfill_from_inventory
+            # Fulfill backorders
+            fulfill = min(node.inventory, node.backorders)
+            node.inventory -= fulfill
+            node.backorders -= fulfill
 
             # Fulfill current demand
             if demand <= node.inventory:
@@ -133,9 +109,34 @@ def simulate_episode(
                 node.backorders += demand - node.inventory
                 node.inventory = 0
 
-            # Update Node state
+            print(f"Demand: {demand}")
+            print(f"After demand | Inventory: {node.inventory}, Backorders: {node.backorders}")
+
+            # Ordering decision (uses inventory position)
+            policy = BaseStockPolicy(
+                node=node,
+                target_inventory=50,
+                safety_stock=10,
+                price_per_unit=20.0
+            )
+
+            pending_orders = node_orders[node.id]
+            order_quantity = policy.decide_order_quantity(pending_orders)
+
+            print(f"Order placed: {order_quantity}")
+
+            if order_quantity > 0:
+                lead_time = np.random.randint(1, 4)
+                pending_orders.append((order_quantity, lead_time))
+
+            # Update node state
             remaining_time = horizon - t - 1
-            category = StateCategory.AWAIT_EVENT if remaining_time > 0 else StateCategory.FINAL
+            category = (
+                StateCategory.AWAIT_EVENT
+                if remaining_time > 0
+                else StateCategory.FINAL
+            )
+
             node.set_state(
                 inventory=node.inventory,
                 backorders=node.backorders,
@@ -143,11 +144,12 @@ def simulate_episode(
                 category=category
             )
 
-            print(f"After Demand {demand} | Updated State: {node}")
-    
-    print("=====================================\n")
+        print("\n----------------------")
+
+    print("\n=====================================")
     print("Episode simulation completed.")
-    print("=====================================\n")
+    print("=====================================")
+
 
 
 
