@@ -21,6 +21,7 @@ class Node:
     holding_cost: float = field(init=True, repr=True)
     upstream_ids: list[int] = field(init=True, repr=False)
     downstream_ids: list[int] = field(init=True, repr=False)
+    policy: Enum = field(init=True, repr=False)
     # ------------
 
     # Dynamic state 
@@ -43,7 +44,7 @@ class Node:
 
     # Prevent modification of static fields
     def __setattr__(self, name, value):
-        if hasattr(self, name) and name in ("id", "capacity", "policy"):
+        if hasattr(self, name) and name in ("id", "capacity", "type", "upstream_ids", "downstream_ids", "name"):
             raise AttributeError(f"{name} is read-only and cannot be modified after initialization")
         super().__setattr__(name, value)
 

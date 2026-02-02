@@ -18,3 +18,6 @@ class PolicyType(Enum):
     BASE_STOCK = auto()
     FIXED_ORDER = auto()
     MIN_MAX = auto()
+    FIXED_ORDER_QUANTITY = auto()
+
+    

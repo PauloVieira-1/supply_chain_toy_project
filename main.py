@@ -4,7 +4,7 @@ from numpy.random import Generator
 from numpy import random as rnd
 from node import Node, StateCategory
 from graph import create_graph_window
-from policy import BaseStockPolicy
+from policy import BaseStockPolicy, FixedOrderPolicy, MinMaxPolicy
 from typing import List
 import numpy as np
 
@@ -48,7 +48,7 @@ def simulate_episode(
         print("----------------------")
 
         # =========================================================
-        # 1. Orders arrive (lead time advances ONCE per period)
+        # Step 1) Orders arrive (lead time advances ONCE per period)
         # =========================================================
         for node in nodes:
             arrived, updated_orders = advance_time(node_orders[node.id])
@@ -56,7 +56,7 @@ def simulate_episode(
             node_orders[node.id] = updated_orders
 
         # =========================================================
-        # 2. Subassembly demand and production
+        # Step 2) Subassembly demand and production
         # =========================================================
         if sub_node:
             final_demand = np.random.poisson(lam=5)
@@ -79,8 +79,10 @@ def simulate_episode(
                 for i in range(len(raw_nodes))
             ) # No lead time because this is not too relevant for this example. Assumes immediate assembly.
 
-            sub_node.inventory += assemblies_possible
-            sub_node.backorders += max(0, final_demand - assemblies_possible)
+            fulfilled = min(sub_node.backorders, assemblies_possible)
+            sub_node.backorders -= fulfilled
+            sub_node.inventory += assemblies_possible - fulfilled
+
 
             print(f"\nSubAssembly {sub_node.name}")
             print(f"Final demand: {final_demand}")
@@ -88,40 +90,39 @@ def simulate_episode(
             print(f"Inventory: {sub_node.inventory}, Backorders: {sub_node.backorders}")
 
         # =========================================================
-        # 3. Raw material demand, ordering, and state update
-        # =========================================================
-        for node in raw_nodes:
-            print(f"\nNode {node.name} (Raw Material)")
-            print(f"Before demand | Inventory: {node.inventory}, Backorders: {node.backorders}")
+        # Step 3) Raw material demand, ordering, and state update
+        # ========================================================
+        for i, raw_node in enumerate(raw_nodes):
+            print(f"\nNode {raw_node.name} (Raw Material)")
+            print(f"Before demand | Inventory: {raw_node.inventory}, Backorders: {raw_node.backorders}")
 
-            # External stochastic demand
-            demand = np.random.poisson(lam=5)
+            # Demand comes from subassembly(s)
+            demand_from_sub = final_demand * assembly_requirement[i]
 
-            # Fulfill backorders
-            fulfill = min(node.inventory, node.backorders)
-            node.inventory -= fulfill
-            node.backorders -= fulfill
+            # Optional: add external demand
+            external_demand = np.random.poisson(lam=2)  # adjust or remove if not needed
+            total_demand = demand_from_sub + external_demand
 
-            # Fulfill current demand
-            if demand <= node.inventory:
-                node.inventory -= demand
+            # Fulfill backorders first
+            fulfill = min(raw_node.inventory, raw_node.backorders)
+            raw_node.inventory -= fulfill
+            raw_node.backorders -= fulfill
+
+            # Fulfill new demand
+            if total_demand <= raw_node.inventory:
+                raw_node.inventory -= total_demand
             else:
-                node.backorders += demand - node.inventory
-                node.inventory = 0
+                raw_node.backorders += total_demand - raw_node.inventory
+                raw_node.inventory = 0
 
-            print(f"Demand: {demand}")
-            print(f"After demand | Inventory: {node.inventory}, Backorders: {node.backorders}")
+
+            print(f"Total demand: {total_demand}")
+            print(f"After demand | Inventory: {raw_node.inventory}, Backorders: {raw_node.backorders}")
 
             # Ordering decision (uses inventory position)
-            policy = BaseStockPolicy(
-                node=node,
-                target_inventory=50,
-                safety_stock=10,
-                price_per_unit=20.0
-            )
-
-            pending_orders = node_orders[node.id]
-            order_quantity = policy.decide_order_quantity(pending_orders)
+            
+            pending_orders = node_orders[raw_node.id]
+            order_quantity = raw_node.policy.decide_order_quantity(pending_orders)
 
             print(f"Order placed: {order_quantity}")
 
@@ -137,9 +138,9 @@ def simulate_episode(
                 else StateCategory.FINAL
             )
 
-            node.set_state(
-                inventory=node.inventory,
-                backorders=node.backorders,
+            raw_node.set_state(
+                inventory=raw_node.inventory,
+                backorders=raw_node.backorders,
                 remaining_time=remaining_time,
                 category=category
             )
@@ -162,10 +163,8 @@ def main() -> None:
 
     print("Node MDP State Management Example")
 
-    id_node = get_random_id(rnd.default_rng())
-
     node_1 = Node(
-        id=id_node,
+        id=get_random_id(rnd.default_rng()),
         name="Node_A",
         capacity=100,
         type="Raw Material",
@@ -173,8 +172,16 @@ def main() -> None:
         backorders=10,
         remaining_time=5,
         holding_cost=1.0,
+        policy=None,
         upstream_ids=[],
         downstream_ids=[3]
+    )
+
+    node_1.policy = BaseStockPolicy(node=node_1)
+    node_1.policy.set_parameters(
+        target_inventory=60,
+        safety_stock=15,
+        price_per_unit=22.0
     )
 
     node_2 = Node(
@@ -186,8 +193,16 @@ def main() -> None:
         backorders=5,
         remaining_time=5,
         holding_cost=1.5,
+        policy=None,
         upstream_ids=[],
         downstream_ids=[3]
+    )
+
+    node_2.policy = MinMaxPolicy(node=node_2)
+    node_2.policy.set_parameters(
+        min_inventory=20,
+        max_inventory=80,
+        price_per_unit=18.0
     )
 
     node_3 = Node(
@@ -199,8 +214,15 @@ def main() -> None:
         backorders=0,
         remaining_time=5,
         holding_cost=2.0,
+        policy=None,
         upstream_ids=[],
         downstream_ids=[3]
+    )
+
+    node_3.policy = FixedOrderPolicy(node=node_3)
+    node_3.policy.set_parameters(
+        order_quantity=30,
+        price_per_unit=25.0
     )
 
     node_4 = Node(
@@ -212,8 +234,16 @@ def main() -> None:
         backorders=20,
         remaining_time=5,
         holding_cost=2.5,
+        policy=None,
         upstream_ids=[1,2,3],
         downstream_ids=[],
+    )
+
+    node_4.policy = BaseStockPolicy(node=node_4)
+    node_4.policy.set_parameters(
+        target_inventory=100,
+        safety_stock=20,
+        price_per_unit=30.0
     )
 
     print(f"Initial Node State: {node_1}")
